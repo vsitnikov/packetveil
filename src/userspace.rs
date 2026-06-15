@@ -1143,7 +1143,7 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
     let dynamic_peer = peer.dynamic_peer
         || peer_ip_str.eq_ignore_ascii_case("dynamic")
         || peer_ip_str == "0.0.0.0";
-    let peer_port = peer.ports.first().copied().unwrap_or(41000);
+    let peer_port = peer.peer_ports.first().copied().unwrap_or(41000);
     let remote_peer_addr: Option<SocketAddr> = if dynamic_peer {
         None
     } else {
@@ -1229,14 +1229,26 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
 
     let sock_buf_size = adaptive_socket_buf_size();
 
-    // ext_sockets: GUT traffic to/from remote peer (bound to all configured ports).
+    // ext_sockets: GUT traffic to/from remote peer.
+    // Server: always binds to each configured port so peers can reach us.
+    // Client (non-SIP): binds to port 0 (OS assigns ephemeral port). This allows
+    //   multiple clients on the same machine to connect to the same server ports
+    //   without conflict. Endpoint roaming ensures the server learns the real port.
+    // Client (SIP): must bind to configured ports — SIP INVITE embeds the RTP port
+    //   numbers that both sides must agree on; ephemeral binding would break the
+    //   SIP session description and RTP striping.
+    let client_needs_fixed_port = is_server || peer.obfs == crate::config::ObfsMode::Sip;
     let mut ext_sockets = Vec::new();
     for &port in &peer.ports {
-        let ext_addr = SocketAddr::new(effective_bind_ip, port);
+        let bind_port = if client_needs_fixed_port { port } else { 0 };
+        let ext_addr = SocketAddr::new(effective_bind_ip, bind_port);
         let ext_socket = Arc::new(bind_udp(ext_addr)?);
         tune_udp_buffers(&ext_socket, sock_buf_size);
         disable_df(&ext_socket);
-        println!("Listening (ext) on {}", ext_addr);
+        println!(
+            "Listening (ext) on {}",
+            ext_socket.local_addr().unwrap_or(ext_addr)
+        );
         ext_sockets.push(ext_socket);
     }
 
@@ -1255,6 +1267,11 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
 
     // Lock-free shared WG peer address (client mode: egress writes, ingress reads)
     let shared_wg_peer = Arc::new(SharedAddr::new());
+    // Endpoint roaming: ingress writes the actual source addr of the last authenticated
+    // packet from the peer; egress prefers this over the configured remote_peer_addr.
+    // This lets the server respond to the client's real (possibly ephemeral) port without
+    // requiring peer_ip=dynamic.
+    let shared_peer_ext = Arc::new(SharedAddr::new());
 
     // Shared maps for dynamic_peer routing (egress reads client_map, ingress writes it; vice versa for session_map)
     let client_map: Arc<Mutex<HashMap<u32, SocketAddr>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -1271,6 +1288,7 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
     let egress_session_map = Arc::clone(&session_map);
     let egress_peer = peer.clone();
     let egress_client_obfs = Arc::clone(&client_obfs);
+    let egress_peer_ext = Arc::clone(&shared_peer_ext);
     let egress_handle = std::thread::Builder::new()
         .name("gutd-egress".into())
         .spawn(move || {
@@ -1351,7 +1369,9 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
                 }
 
                 let egress_dest = if !dynamic_peer {
-                    remote_peer_addr
+                    // Prefer the endpoint learned from the last authenticated inbound
+                    // packet (roaming), fall back to the statically configured address.
+                    egress_peer_ext.load().map(Some).unwrap_or(remote_peer_addr)
                 } else if size >= 4 {
                     let wg_type = buf[0] & 0x1F;
                     if wg_type == 1 {
@@ -1420,9 +1440,9 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
                                     ..crate::proto::sip::RTP_HEADER_LEN + new_size]
                                     .copy_from_slice(&buf[..new_size]);
 
-                                if peer.ports.len() > 1 {
-                                    sock_idx = 1 + (ts as usize % (peer.ports.len() - 1));
-                                    final_dest.set_port(peer.ports[sock_idx]);
+                                if peer.peer_ports.len() > 1 {
+                                    sock_idx = 1 + (ts as usize % (peer.peer_ports.len() - 1));
+                                    final_dest.set_port(peer.peer_ports[sock_idx]);
                                 }
 
                                 &out_buf[..crate::proto::sip::RTP_HEADER_LEN + new_size]
@@ -1446,7 +1466,7 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
                                 sip_buf.fill(0);
                                 let src_ip_str = src.ip().to_string();
                                 let dst_ip_str = dest.ip().to_string();
-                                let rtp_port = peer.ports.get(1).copied().unwrap_or(10000);
+                                let rtp_port = peer.peer_ports.get(1).copied().unwrap_or(10000);
                                 let date_str = crate::proto::sip::format_sip_date_only(
                                     SystemTime::now()
                                         .duration_since(UNIX_EPOCH)
@@ -1474,9 +1494,9 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
                                 out_buf[..sip_header_len]
                                     .copy_from_slice(&sip_buf[..sip_header_len]);
 
-                                final_dest.set_port(peer.ports[0]);
+                                final_dest.set_port(peer.peer_ports[0]);
                                 #[cfg(debug_assertions)]
-                                println!("[gutd] sending SIP to port {}", peer.ports[0]);
+                                println!("[gutd] sending SIP to port {}", peer.peer_ports[0]);
                                 sock_idx = 0;
 
                                 &out_buf[..sip_header_len + b64_len]
@@ -1508,6 +1528,7 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
         let ingress_client_map = Arc::clone(&client_map);
         let ingress_session_map = Arc::clone(&session_map);
         let ingress_client_obfs = Arc::clone(&client_obfs);
+        let ingress_peer_ext = Arc::clone(&shared_peer_ext);
         let ingress_peer = peer.clone();
 
         let ingress_handle = std::thread::Builder::new()
@@ -1716,6 +1737,11 @@ pub fn run(config: &crate::config::Config) -> crate::Result<()> {
                     if let Some((new_size, _wg_sport, _wg_dport)) =
                         obfs_decap(buf, size, &key_init, rounds, detected_obfs)
                     {
+                        // Endpoint roaming: remember the actual source of every
+                        // authenticated packet so the egress thread can respond
+                        // to the peer's real (possibly ephemeral) port.
+                        ingress_peer_ext.store(src);
+
                         if dynamic_peer && new_size >= 8 {
                             let wg_type = buf[0] & 0x1F;
                             if wg_type == 1 {
