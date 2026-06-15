@@ -699,20 +699,12 @@ int gut_egress(struct __sk_buff *skb)
         __u64 ip_csum = bpf_csum_diff(0, 0, (__be32 *)iph, sizeof(struct iphdr), 0);
         iph->check = csum_fold(ip_csum);
 
-        /* Kernel's udp_set_csum() forces skb->ip_summed = CHECKSUM_PARTIAL
-         * for locally-generated UDP-encapsulated traffic (WireGuard). In that
-         * mode the NIC offload (or skb_checksum_help() when offload is off)
-         * finalises the checksum by adding the payload sum. We must therefore
-         * write ONLY the pseudo-header fold into udph->check (matching what
-         * udp_set_csum() does). Writing the full checksum here causes HW
-         * offload to add the payload sum a second time and corrupts the
-         * value on the wire. */
+        /* IPv4 UDP checksums are optional.  The encapsulated skb can carry stale
+         * CHECKSUM_PARTIAL metadata from the inner WireGuard UDP packet, which
+         * makes the outer checksum field wrong on some VM/NAT paths.  Emit an
+         * explicit zero checksum for the final outer IPv4 UDP packet instead of
+         * relying on skb checksum metadata/offload state. */
         udph->check = 0;
-        __u32 pseudo = 0;
-        pseudo = bpf_csum_diff(0, 0, &iph->saddr, 8, pseudo); // saddr and daddr are contiguous
-        __u32 ph = bpf_htonl((IPPROTO_UDP << 16) | bpf_ntohs(udph->len));
-        pseudo = bpf_csum_diff(0, 0, &ph, 4, pseudo);
-        udph->check = (__u16)~csum_fold(pseudo); // pseudo-only; NIC/kernel adds payload
     }
     else if (ipver == 6)
     {
