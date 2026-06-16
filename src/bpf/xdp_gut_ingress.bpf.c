@@ -820,6 +820,19 @@ static __always_inline int gut_xdp_core(struct xdp_md *ctx, struct gut_config *c
 
     __u16 new_udp_len = (__u16)(udp_len - tail_total - outer_hdr_len);
 #endif
+    if (ipver == 4)
+    {
+        struct iphdr *iph_check = (void *)((__u8 *)data + ip_off);
+        if ((void *)(iph_check + 1) > data_end)
+            return -1;
+    }
+    else
+    {
+        struct ipv6hdr *ip6h_check = (void *)((__u8 *)data + ip_off);
+        if ((void *)(ip6h_check + 1) > data_end)
+            return -1;
+    }
+
     udph->len = bpf_htons(new_udp_len);
     udph->check = 0;
 
