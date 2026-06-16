@@ -754,6 +754,63 @@ static __always_inline int gut_xdp_core(struct xdp_md *ctx, struct gut_config *c
     }
 #endif
 
+#if defined(GUT_MODE_GUT)
+    __u32 restored_wg_len = wg_len;
+    if (wg_type == 1)
+    {
+        if (wg_len < 148)
+            return -1;
+        restored_wg_len = 148;
+    }
+    else if (wg_type == 2)
+    {
+        if (wg_len < 92)
+            return -1;
+        restored_wg_len = 92;
+    }
+    else if (wg_type == 3)
+    {
+        if (wg_len < 64)
+            return -1;
+        restored_wg_len = 64;
+    }
+    else if (wg_type == 4)
+    {
+        if (ballast_len > 63 || ballast_len > wg_len)
+            return -1;
+        restored_wg_len = wg_len - ballast_len;
+        if (restored_wg_len < WG_MIN_PACKET)
+            return -1;
+    }
+    else
+    {
+        return -1;
+    }
+
+    if (restored_wg_len > wg_len)
+        return -1;
+
+    __u32 tail_total = wg_len - restored_wg_len;
+    if (tail_total > 0)
+    {
+        if (bpf_xdp_adjust_tail(ctx, -((int)tail_total)) < 0)
+            return -1;
+
+        data = (void *)(__u64)ctx->data;
+        data_end = (void *)(__u64)ctx->data_end;
+        eth = data;
+        if ((void *)(eth + 1) > data_end)
+            return -1;
+        udph = (void *)((__u8 *)data + udp_off);
+        if ((void *)(udph + 1) > data_end)
+            return -1;
+        wg = (__u8 *)data + wg_off + outer_hdr_len;
+        if (wg + restored_wg_len > (__u8 *)data_end)
+            return -1;
+    }
+
+    __u16 new_udp_len = (__u16)(sizeof(struct udphdr) + restored_wg_len);
+#else
     if (ballast_len > 63 || ballast_len > wg_len)
         return -1;
 
@@ -761,9 +818,8 @@ static __always_inline int gut_xdp_core(struct xdp_md *ctx, struct gut_config *c
     if (wg_len < tail_total || wg_len - tail_total < WG_MIN_PACKET)
         return -1;
 
-    // "нам ничего не надо считать от конца пакета!!" -> we removed meta extraction.
-
     __u16 new_udp_len = (__u16)(udp_len - tail_total - outer_hdr_len);
+#endif
     udph->len = bpf_htons(new_udp_len);
     udph->check = 0;
 
