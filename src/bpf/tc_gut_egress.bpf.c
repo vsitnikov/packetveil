@@ -610,6 +610,10 @@ int gut_egress(struct __sk_buff *skb)
         __u8 len_byte = (__u8)len_code;
         if (bpf_skb_store_bytes(skb, new_quic_off + 8, &len_byte, 1, 0) < 0)
             return TC_ACT_OK;
+        if (bpf_skb_pull_data(skb, skb->len) < 0)
+            return TC_ACT_OK;
+        data = (void *)(long)skb->data;
+        data_end = (void *)(long)skb->data_end;
     }
 #else  /* GUT_MODE_QUIC */
     __u8 *quic = (__u8 *)data + new_quic_off;
