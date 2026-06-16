@@ -791,23 +791,8 @@ static __always_inline int gut_xdp_core(struct xdp_md *ctx, struct gut_config *c
         return -1;
 
     __u32 tail_total = wg_len - restored_wg_len;
-    if (tail_total > 0)
-    {
-        if (bpf_xdp_adjust_tail(ctx, -((int)tail_total)) < 0)
-            return -1;
-
-        data = (void *)(__u64)ctx->data;
-        data_end = (void *)(__u64)ctx->data_end;
-        eth = data;
-        if ((void *)(eth + 1) > data_end)
-            return -1;
-        udph = (void *)((__u8 *)data + udp_off);
-        if ((void *)(udph + 1) > data_end)
-            return -1;
-        wg = (__u8 *)data + wg_off + outer_hdr_len;
-        if (wg + restored_wg_len > (__u8 *)data_end)
-            return -1;
-    }
+    if (tail_total > 63)
+        return -1;
 
     __u16 new_udp_len = (__u16)(sizeof(struct udphdr) + restored_wg_len);
 #else
