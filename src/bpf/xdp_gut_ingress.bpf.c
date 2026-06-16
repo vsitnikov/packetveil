@@ -776,10 +776,9 @@ static __always_inline int gut_xdp_core(struct xdp_md *ctx, struct gut_config *c
     }
     else if (wg_type == 4)
     {
-        if (ballast_len > 63 || ballast_len > wg_len)
-            return -1;
-        restored_wg_len = wg_len - ballast_len;
-        if (restored_wg_len < WG_MIN_PACKET)
+        __u32 len_code = quic[8];
+        restored_wg_len = WG_MIN_PACKET + (len_code << 4);
+        if (restored_wg_len < WG_MIN_PACKET || restored_wg_len > wg_len)
             return -1;
     }
     else

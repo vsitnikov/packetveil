@@ -600,6 +600,17 @@ int gut_egress(struct __sk_buff *skb)
 #elif defined(GUT_MODE_GUT)
     __u8 *quic = (__u8 *)data + new_quic_off;
     write_gut_header(quic, data_end, ppn, enc_ports, pad_len);
+    if (wg_type == 4)
+    {
+        if (wg_len < WG_MIN_PACKET || ((wg_len - WG_MIN_PACKET) & 0x0F))
+            return TC_ACT_OK;
+        __u32 len_code = (wg_len - WG_MIN_PACKET) >> 4;
+        if (len_code > 255)
+            return TC_ACT_OK;
+        if (quic + GUT_HEADER_SIZE > (__u8 *)data_end)
+            return TC_ACT_OK;
+        quic[8] = (__u8)len_code;
+    }
 #else  /* GUT_MODE_QUIC */
     __u8 *quic = (__u8 *)data + new_quic_off;
     if (outer_hdr_len == GUT_QUIC_SHORT_HEADER_SIZE)
