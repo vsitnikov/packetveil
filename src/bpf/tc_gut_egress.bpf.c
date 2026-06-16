@@ -599,6 +599,7 @@ int gut_egress(struct __sk_buff *skb)
     }
 #elif defined(GUT_MODE_GUT)
     __u8 *quic = (__u8 *)data + new_quic_off;
+    __u8 gut_type4_len_byte = 0;
     write_gut_header(quic, data_end, ppn, enc_ports, pad_len);
     if (wg_type == 4)
     {
@@ -607,13 +608,7 @@ int gut_egress(struct __sk_buff *skb)
         __u32 len_code = (wg_len - WG_MIN_PACKET) >> 4;
         if (len_code > 255)
             return TC_ACT_OK;
-        __u8 len_byte = (__u8)len_code;
-        if (bpf_skb_store_bytes(skb, new_quic_off + 8, &len_byte, 1, 0) < 0)
-            return TC_ACT_OK;
-        if (bpf_skb_pull_data(skb, skb->len) < 0)
-            return TC_ACT_OK;
-        data = (void *)(long)skb->data;
-        data_end = (void *)(long)skb->data_end;
+        gut_type4_len_byte = (__u8)len_code;
     }
 #else  /* GUT_MODE_QUIC */
     __u8 *quic = (__u8 *)data + new_quic_off;
@@ -789,6 +784,14 @@ int gut_egress(struct __sk_buff *skb)
     eth = data;
     __builtin_memcpy(eth->h_dest, cfg->dst_mac, 6);
     __builtin_memcpy(eth->h_source, cfg->src_mac, 6);
+
+#if defined(GUT_MODE_GUT)
+    if (wg_type == 4)
+    {
+        if (bpf_skb_store_bytes(skb, new_quic_off + 8, &gut_type4_len_byte, 1, 0) < 0)
+            return TC_ACT_OK;
+    }
+#endif
 
     if (stats)
     {
