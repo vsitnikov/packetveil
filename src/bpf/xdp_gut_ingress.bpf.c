@@ -779,7 +779,11 @@ static __always_inline int gut_xdp_core(struct xdp_md *ctx, struct gut_config *c
         __u32 len_code = quic[8];
         restored_wg_len = WG_MIN_PACKET + (len_code << 4);
         if (restored_wg_len < WG_MIN_PACKET || restored_wg_len > wg_len)
-            return -1;
+            return -2;
+        if (ballast_len > 63)
+            return -2;
+        if (wg_len - restored_wg_len != ballast_len)
+            return -2;
     }
     else
     {
@@ -1375,6 +1379,9 @@ int xdp_gut_ingress(struct xdp_md *ctx)
     int rc = gut_xdp_core(ctx, cfg);
     if (rc != 0)
     {
+        if (rc == -2)
+            return XDP_DROP;
+
 #if defined(GUT_MODE_QUIC)
         /* QUIC mode: tail-call to probe handler to stay within verifier
          * budget on kernel ≤6.2.  On tail-call failure, fall through. */

@@ -607,9 +607,9 @@ int gut_egress(struct __sk_buff *skb)
         __u32 len_code = (wg_len - WG_MIN_PACKET) >> 4;
         if (len_code > 255)
             return TC_ACT_OK;
-        if (quic + GUT_HEADER_SIZE > (__u8 *)data_end)
+        __u8 len_byte = (__u8)len_code;
+        if (bpf_skb_store_bytes(skb, new_quic_off + 8, &len_byte, 1, 0) < 0)
             return TC_ACT_OK;
-        quic[8] = (__u8)len_code;
     }
 #else  /* GUT_MODE_QUIC */
     __u8 *quic = (__u8 *)data + new_quic_off;
