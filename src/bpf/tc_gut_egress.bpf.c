@@ -788,8 +788,10 @@ int gut_egress(struct __sk_buff *skb)
 #if defined(GUT_MODE_GUT)
     if (wg_type == 4)
     {
-        if (bpf_skb_store_bytes(skb, new_quic_off + 8, &gut_type4_len_byte, 1, 0) < 0)
+        __u8 *gut_lenp = (__u8 *)data + udp_off + sizeof(struct udphdr) + 8;
+        if (gut_lenp + 1 > (__u8 *)data_end)
             return TC_ACT_OK;
+        *gut_lenp = gut_type4_len_byte;
     }
 #endif
 
