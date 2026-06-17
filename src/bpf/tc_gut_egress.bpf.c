@@ -501,9 +501,17 @@ int gut_egress(struct __sk_buff *skb)
     __u32 room = outer_hdr_len;
 #endif
 
+    #if defined(GUT_MODE_GUT)
+    /* GUT mode constructs the outer IPv4/IPv6+UDP header manually below.
+     * Do not set skb UDP-encap/GSO metadata here: on the dynamic-peer
+     * reverse path that metadata can diverge from the linear bytes
+     * that TC reads back before bpf_redirect().
+     */
+    __u64 adj_flags = 0;
+#else
     __u64 adj_flags = BPF_F_ADJ_ROOM_ENCAP_L4_UDP | BPF_F_ADJ_ROOM_FIXED_GSO;
     adj_flags |= (ipver == 6) ? BPF_F_ADJ_ROOM_ENCAP_L3_IPV6 : BPF_F_ADJ_ROOM_ENCAP_L3_IPV4;
-
+#endif
     if (bpf_skb_adjust_room(skb, room, BPF_ADJ_ROOM_MAC, adj_flags) < 0)
         return TC_ACT_OK;
 
@@ -824,14 +832,14 @@ int gut_egress(struct __sk_buff *skb)
         if (tc_dbg)
         {
             __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_metadata_attempt, 1);
-            tc_dbg->tc_dbg_type4_store_offset_last = udp_off + sizeof(struct udphdr);
+            tc_dbg->tc_dbg_type4_store_offset_last = new_quic_off;
         }
         __u8 gut_hdr[GUT_HEADER_SIZE];
         __builtin_memcpy(gut_hdr + 0, &ppn, 4);
         __builtin_memcpy(gut_hdr + 4, &enc_ports, 4);
         gut_hdr[8] = gut_type4_len_byte;
         gut_hdr[9] = (pad_len > 0) ? (0x40 | ((__u8)(pad_len - 1) & 0x3F)) : 0x00;
-        if (bpf_skb_store_bytes(skb, udp_off + sizeof(struct udphdr), gut_hdr, GUT_HEADER_SIZE, 0) < 0)
+        if (bpf_skb_store_bytes(skb, new_quic_off, gut_hdr, GUT_HEADER_SIZE, 0) < 0)
         {
             if (tc_dbg)
                 __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_metadata_fail, 1);
@@ -841,7 +849,7 @@ int gut_egress(struct __sk_buff *skb)
         {
             __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_metadata_success, 1);
             __u8 final_byte8 = 0;
-            if (bpf_skb_load_bytes(skb, udp_off + sizeof(struct udphdr) + 8, &final_byte8, 1) == 0)
+            if (bpf_skb_load_bytes(skb, new_quic_off + 8, &final_byte8, 1) == 0)
             {
                 tc_dbg->tc_dbg_type4_final_byte8_last = final_byte8;
                 if (final_byte8 == 0x06)
@@ -864,7 +872,52 @@ int gut_egress(struct __sk_buff *skb)
         stats->bytes_processed += (__u64)skb->len;
     }
 
-    bpf_debug("TC egress: wg_type=%d outer_hdr=%d pad=%d port=%d", wg_type, outer_hdr_len, pad_len, tunnel_port);
+    
+#if defined(GUT_MODE_GUT)
+    if (wg_type == 4) {
+        __u8 emit_gut_hdr[GUT_HEADER_SIZE];
+        __builtin_memcpy(emit_gut_hdr + 0, &ppn, 4);
+        __builtin_memcpy(emit_gut_hdr + 4, &enc_ports, 4);
+        emit_gut_hdr[8] = gut_type4_len_byte;
+        emit_gut_hdr[9] = (pad_len > 0) ? (0x40 | ((__u8)(pad_len - 1) & 0x3F)) : 0x00;
+
+        if (tc_dbg)
+            __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_metadata_attempt, 1);
+
+        if (bpf_skb_store_bytes(skb, new_quic_off, emit_gut_hdr, GUT_HEADER_SIZE, 0) < 0) {
+            if (tc_dbg)
+                __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_metadata_fail, 1);
+            return TC_ACT_OK;
+        }
+
+        if (tc_dbg) {
+            __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_metadata_success, 1);
+            tc_dbg->tc_dbg_type4_store_offset_last = new_quic_off;
+            tc_dbg->tc_dbg_type4_wg_len_last = wg_len;
+            tc_dbg->tc_dbg_type4_len_code_last = gut_type4_len_byte;
+        }
+
+        if (wg_len == 128) {
+            __u8 emit_b0 = 0;
+            __u8 emit_b8 = 0;
+            __u8 emit_b9 = 0;
+            bpf_skb_load_bytes(skb, new_quic_off + 0, &emit_b0, 1);
+            bpf_skb_load_bytes(skb, new_quic_off + 8, &emit_b8, 1);
+            bpf_skb_load_bytes(skb, new_quic_off + 9, &emit_b9, 1);
+            if (tc_dbg) {
+                tc_dbg->tc_dbg_type4_final_byte8_last = emit_b8;
+                if (emit_b8 == 0x06)
+                    __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_after_final_header_byte8_is_06, 1);
+                else
+                    __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_after_final_header_byte8_not_06, 1);
+            }
+            bpf_printk("tc_emit_dbg2 dyn=%u wg_len=%u off=%u b0=0x%x b8=0x%x b9=0x%x",
+                       cfg->dynamic_peer, wg_len, new_quic_off,
+                       (__u32)emit_b0, (__u32)emit_b8, (__u32)emit_b9);
+        }
+    }
+#endif
+bpf_debug("TC egress: wg_type=%d outer_hdr=%d pad=%d port=%d", wg_type, outer_hdr_len, pad_len, tunnel_port);
     return bpf_redirect(cfg->egress_ifindex, 0);
 }
 
