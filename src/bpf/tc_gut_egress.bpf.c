@@ -86,6 +86,9 @@ int gut_egress(struct __sk_buff *skb)
         return TC_ACT_OK;
 
     struct gut_stats *stats = bpf_map_lookup_elem(&stats_map, &zero);
+    struct tc_debug_stats *tc_dbg = bpf_map_lookup_elem(&tc_debug_map, &zero);
+    if (tc_dbg)
+        __sync_fetch_and_add(&tc_dbg->tc_dbg_egress_total, 1);
     /* stats is per-CPU; NULL means kernel memory error — only gated writes below */
 
     if (skb->len < 14 + 20 + 8 + WG_MIN_PACKET)
@@ -158,6 +161,29 @@ int gut_egress(struct __sk_buff *skb)
     __u8 wg_type = wg_head[0] & 0x1F;
     if (wg_type < 1 || wg_type > 4 || wg_head[1] != 0 || wg_head[2] != 0)
         return TC_ACT_OK;
+    if (tc_dbg)
+    {
+        if (wg_type == 1)
+            __sync_fetch_and_add(&tc_dbg->tc_dbg_wg_type1, 1);
+        else if (wg_type == 2)
+            __sync_fetch_and_add(&tc_dbg->tc_dbg_wg_type2, 1);
+        else if (wg_type == 3)
+            __sync_fetch_and_add(&tc_dbg->tc_dbg_wg_type3, 1);
+        else if (wg_type == 4)
+        {
+            __sync_fetch_and_add(&tc_dbg->tc_dbg_wg_type4, 1);
+            if (wg_len == 128)
+                __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_wg_len_128, 1);
+            if (cfg->dynamic_peer)
+            {
+                __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_dynamic_peer, 1);
+            }
+            else
+            {
+                __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_fixed_peer, 1);
+            }
+        }
+    }
 
     /* Keepalive drop: WG type=4, size=32 (empty transport).
      * Drop probabilistically on egress so the packet never hits the wire,
@@ -600,6 +626,8 @@ int gut_egress(struct __sk_buff *skb)
 #elif defined(GUT_MODE_GUT)
     __u8 *quic = (__u8 *)data + new_quic_off;
     __u8 gut_type4_len_byte = 0;
+    if (tc_dbg)
+        __sync_fetch_and_add(&tc_dbg->tc_dbg_gut_mode_total, 1);
     write_gut_header(quic, data_end, ppn, enc_ports, pad_len);
     if (wg_type == 4)
     {
@@ -609,6 +637,11 @@ int gut_egress(struct __sk_buff *skb)
         if (len_code > 255)
             return TC_ACT_OK;
         gut_type4_len_byte = (__u8)len_code;
+        if (tc_dbg)
+        {
+            tc_dbg->tc_dbg_type4_wg_len_last = wg_len;
+            tc_dbg->tc_dbg_type4_len_code_last = len_code;
+        }
     }
 #else  /* GUT_MODE_QUIC */
     __u8 *quic = (__u8 *)data + new_quic_off;
@@ -788,13 +821,39 @@ int gut_egress(struct __sk_buff *skb)
 #if defined(GUT_MODE_GUT)
     if (wg_type == 4)
     {
+        if (tc_dbg)
+        {
+            __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_metadata_attempt, 1);
+            tc_dbg->tc_dbg_type4_store_offset_last = udp_off + sizeof(struct udphdr);
+        }
         __u8 gut_hdr[GUT_HEADER_SIZE];
         __builtin_memcpy(gut_hdr + 0, &ppn, 4);
         __builtin_memcpy(gut_hdr + 4, &enc_ports, 4);
         gut_hdr[8] = gut_type4_len_byte;
         gut_hdr[9] = (pad_len > 0) ? (0x40 | ((__u8)(pad_len - 1) & 0x3F)) : 0x00;
         if (bpf_skb_store_bytes(skb, udp_off + sizeof(struct udphdr), gut_hdr, GUT_HEADER_SIZE, 0) < 0)
+        {
+            if (tc_dbg)
+                __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_metadata_fail, 1);
             return TC_ACT_OK;
+        }
+        if (tc_dbg)
+        {
+            __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_metadata_success, 1);
+            __u8 final_byte8 = 0;
+            if (bpf_skb_load_bytes(skb, udp_off + sizeof(struct udphdr) + 8, &final_byte8, 1) == 0)
+            {
+                tc_dbg->tc_dbg_type4_final_byte8_last = final_byte8;
+                if (final_byte8 == 0x06)
+                    __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_after_final_header_byte8_is_06, 1);
+                else
+                    __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_after_final_header_byte8_not_06, 1);
+                if (wg_len == 128)
+                    bpf_printk("tc_dbg type4 len128 dyn=%u wg_len=%u code=%u off=%u byte8=0x%x",
+                               cfg->dynamic_peer, wg_len, (__u32)gut_type4_len_byte,
+                               udp_off + sizeof(struct udphdr), (__u32)final_byte8);
+            }
+        }
     }
 #endif
 

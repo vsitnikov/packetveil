@@ -31,10 +31,11 @@ use crate::netlink::{
     probe_neighbor_udp, read_gso_max_size, read_mac, read_mtu,
 };
 use crate::tc::maps::{
-    GutConfig, GutStats, DEFAULT_INNER_MTU, GUT_FLAG_NEED_L4_CSUM, OUTER_OVERHEAD_IPV4,
+    GutConfig, GutStats, TcDebugStats, DEFAULT_INNER_MTU, GUT_FLAG_NEED_L4_CSUM, OUTER_OVERHEAD_IPV4,
     OUTER_OVERHEAD_IPV6,
 };
 use crate::Result;
+use std::os::fd::AsRawFd;
 use std::sync::atomic::Ordering;
 #[cfg(not(target_has_atomic = "64"))]
 use std::sync::Mutex;
@@ -332,6 +333,7 @@ impl EgressSkel {
                     "config_map" => Some($s.maps.config_map.as_fd()),
                     "counters_map" => Some($s.maps.counters_map.as_fd()),
                     "stats_map" => Some($s.maps.stats_map.as_fd()),
+                    "tc_debug_map" => Some($s.maps.tc_debug_map.as_fd()),
                     "scratch_map" => Some($s.maps.scratch_map.as_fd()),
                     _ => None,
                 }
@@ -628,6 +630,7 @@ pub struct TcBpfManager {
 pub struct TcStats {
     pub egress: GutStats,
     pub ingress: GutStats,
+    pub debug: TcDebugStats,
 }
 
 #[cfg(target_os = "linux")]
@@ -2029,7 +2032,26 @@ impl TcBpfManager {
             .map(|per_cpu| Self::parse_percpu_stats(&per_cpu, value_size))
             .unwrap_or_default();
 
-        Ok(TcStats { egress, ingress })
+        let debug = self
+            .egress_skel
+            .get_map_fd("tc_debug_map")
+            .and_then(|fd| Self::lookup_array_raw(fd.as_raw_fd(), &key, std::mem::size_of::<TcDebugStats>()))
+            .map(|bytes| Self::parse_tc_debug_stats(&bytes))
+            .unwrap_or_default();
+
+        Ok(TcStats { egress, ingress, debug })
+    }
+
+    #[cfg(all(target_os = "linux", feature = "tc_ebpf"))]
+    fn lookup_array_raw(map_fd: i32, key: &[u8], value_size: usize) -> Option<Vec<u8>> {
+        let mut buf = vec![0u8; value_size];
+        let ret = unsafe {
+            libbpf_sys::bpf_map_lookup_elem(map_fd, key.as_ptr().cast(), buf.as_mut_ptr().cast())
+        };
+        if ret < 0 {
+            return None;
+        }
+        Some(buf)
     }
 
     /// Read a PERCPU_ARRAY map entry by raw FD.
@@ -2072,6 +2094,21 @@ impl TcBpfManager {
             }
         }
         GutStats::aggregate(&per_cpu)
+    }
+
+    #[cfg(all(target_os = "linux", feature = "tc_ebpf"))]
+    fn parse_tc_debug_stats(data: &[u8]) -> TcDebugStats {
+        let mut stats = TcDebugStats::default();
+        if data.len() >= std::mem::size_of::<TcDebugStats>() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    data.as_ptr(),
+                    (&raw mut stats).cast::<u8>(),
+                    std::mem::size_of::<TcDebugStats>(),
+                );
+            }
+        }
+        stats
     }
 
     #[cfg(not(all(target_os = "linux", feature = "tc_ebpf")))]

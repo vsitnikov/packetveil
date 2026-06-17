@@ -75,6 +75,28 @@ fn print_bpf_stats(managers: &[gutd::tc::TcBpfManager]) {
                     stats.egress.packets_fragmented,
                     stats.egress.packets_oversized
                 );
+                let d = stats.debug;
+                eprintln!(
+                    "    tc_dbg egress_total={} gut_mode_total={} wg_type1={} wg_type2={} wg_type3={} wg_type4={} type4_len128={} type4_dynamic={} type4_fixed={} metadata_attempt={} metadata_success={} metadata_fail={} byte8_is_06={} byte8_not_06={} store_offset_last={} wg_len_last={} len_code_last={} final_byte8_last=0x{:02x}",
+                    d.tc_dbg_egress_total,
+                    d.tc_dbg_gut_mode_total,
+                    d.tc_dbg_wg_type1,
+                    d.tc_dbg_wg_type2,
+                    d.tc_dbg_wg_type3,
+                    d.tc_dbg_wg_type4,
+                    d.tc_dbg_type4_wg_len_128,
+                    d.tc_dbg_type4_dynamic_peer,
+                    d.tc_dbg_type4_fixed_peer,
+                    d.tc_dbg_type4_metadata_attempt,
+                    d.tc_dbg_type4_metadata_success,
+                    d.tc_dbg_type4_metadata_fail,
+                    d.tc_dbg_type4_after_final_header_byte8_is_06,
+                    d.tc_dbg_type4_after_final_header_byte8_not_06,
+                    d.tc_dbg_type4_store_offset_last,
+                    d.tc_dbg_type4_wg_len_last,
+                    d.tc_dbg_type4_len_code_last,
+                    d.tc_dbg_type4_final_byte8_last,
+                );
             }
             Err(e) => eprintln!("  [{}] Failed to read BPF stats: {e}", manager.interface()),
         }
@@ -159,6 +181,25 @@ fn dump_counters_file(
                     "{peer}_ingress_oversized={}",
                     stats.ingress.packets_oversized
                 );
+                let d = stats.debug;
+                let _ = writeln!(buf, "{peer}_tc_dbg_egress_total={}", d.tc_dbg_egress_total);
+                let _ = writeln!(buf, "{peer}_tc_dbg_gut_mode_total={}", d.tc_dbg_gut_mode_total);
+                let _ = writeln!(buf, "{peer}_tc_dbg_wg_type1={}", d.tc_dbg_wg_type1);
+                let _ = writeln!(buf, "{peer}_tc_dbg_wg_type2={}", d.tc_dbg_wg_type2);
+                let _ = writeln!(buf, "{peer}_tc_dbg_wg_type3={}", d.tc_dbg_wg_type3);
+                let _ = writeln!(buf, "{peer}_tc_dbg_wg_type4={}", d.tc_dbg_wg_type4);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_wg_len_128={}", d.tc_dbg_type4_wg_len_128);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_dynamic_peer={}", d.tc_dbg_type4_dynamic_peer);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_fixed_peer={}", d.tc_dbg_type4_fixed_peer);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_metadata_attempt={}", d.tc_dbg_type4_metadata_attempt);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_metadata_success={}", d.tc_dbg_type4_metadata_success);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_metadata_fail={}", d.tc_dbg_type4_metadata_fail);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_after_final_header_byte8_is_06={}", d.tc_dbg_type4_after_final_header_byte8_is_06);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_after_final_header_byte8_not_06={}", d.tc_dbg_type4_after_final_header_byte8_not_06);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_store_offset_last={}", d.tc_dbg_type4_store_offset_last);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_wg_len_last={}", d.tc_dbg_type4_wg_len_last);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_len_code_last={}", d.tc_dbg_type4_len_code_last);
+                let _ = writeln!(buf, "{peer}_tc_dbg_type4_final_byte8_last={}", d.tc_dbg_type4_final_byte8_last);
             }
             Err(e) => {
                 let _ = writeln!(buf, "{peer}_bpf_stats_error={e}");
@@ -475,6 +516,7 @@ fn run_daemon(config: config::Config, reload_source: Option<String>) -> Result<(
                 stats_tick += 1;
                 if stats_tick >= stats_ticks_target {
                     stats_tick = 0;
+                    print_bpf_stats(&managers);
                     dump_counters_file(&stat_file, start.elapsed().as_secs_f64(), &managers);
                 }
             }

@@ -172,6 +172,28 @@ struct gut_stats
     __u64 packets_ingress; /* XDP ingress: outer→WG (de-obfuscated) packets received */
 };
 
+struct tc_debug_stats
+{
+    __u64 tc_dbg_egress_total;
+    __u64 tc_dbg_gut_mode_total;
+    __u64 tc_dbg_wg_type1;
+    __u64 tc_dbg_wg_type2;
+    __u64 tc_dbg_wg_type3;
+    __u64 tc_dbg_wg_type4;
+    __u64 tc_dbg_type4_wg_len_128;
+    __u64 tc_dbg_type4_dynamic_peer;
+    __u64 tc_dbg_type4_fixed_peer;
+    __u64 tc_dbg_type4_metadata_attempt;
+    __u64 tc_dbg_type4_metadata_success;
+    __u64 tc_dbg_type4_metadata_fail;
+    __u64 tc_dbg_type4_after_final_header_byte8_is_06;
+    __u64 tc_dbg_type4_after_final_header_byte8_not_06;
+    __u64 tc_dbg_type4_store_offset_last;
+    __u64 tc_dbg_type4_wg_len_last;
+    __u64 tc_dbg_type4_len_code_last;
+    __u64 tc_dbg_type4_final_byte8_last;
+};
+
 /* Monotonic sequence counter for packets */
 struct gut_counters
 {
@@ -194,6 +216,14 @@ struct
     __type(key, __u32);
     __type(value, struct gut_stats);
 } stats_map SEC(".maps");
+
+struct
+{
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct tc_debug_stats);
+} tc_debug_map SEC(".maps");
 
 /* Atomic counters map */
 struct

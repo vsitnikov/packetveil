@@ -194,6 +194,29 @@ pub struct GutStats {
     pub packets_ingress: u64, // XDP ingress: outer→WG packets received
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TcDebugStats {
+    pub tc_dbg_egress_total: u64,
+    pub tc_dbg_gut_mode_total: u64,
+    pub tc_dbg_wg_type1: u64,
+    pub tc_dbg_wg_type2: u64,
+    pub tc_dbg_wg_type3: u64,
+    pub tc_dbg_wg_type4: u64,
+    pub tc_dbg_type4_wg_len_128: u64,
+    pub tc_dbg_type4_dynamic_peer: u64,
+    pub tc_dbg_type4_fixed_peer: u64,
+    pub tc_dbg_type4_metadata_attempt: u64,
+    pub tc_dbg_type4_metadata_success: u64,
+    pub tc_dbg_type4_metadata_fail: u64,
+    pub tc_dbg_type4_after_final_header_byte8_is_06: u64,
+    pub tc_dbg_type4_after_final_header_byte8_not_06: u64,
+    pub tc_dbg_type4_store_offset_last: u64,
+    pub tc_dbg_type4_wg_len_last: u64,
+    pub tc_dbg_type4_len_code_last: u64,
+    pub tc_dbg_type4_final_byte8_last: u64,
+}
+
 /// Offload capability flags — mirrors GUT_FLAG_* in gut_common.h
 pub const GUT_FLAG_NEED_L4_CSUM: u16 = 1 << 0;
 
@@ -213,6 +236,7 @@ fn compute_chacha_init(key: &[u8; 32]) -> [u32; 12] {
 
 const _: [(); 628] = [(); std::mem::size_of::<GutConfig>()];
 const _: [(); 72] = [(); std::mem::size_of::<GutStats>()];
+const _: [(); 144] = [(); std::mem::size_of::<TcDebugStats>()];
 
 impl GutStats {
     #[must_use]
