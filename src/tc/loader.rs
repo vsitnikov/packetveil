@@ -31,8 +31,8 @@ use crate::netlink::{
     probe_neighbor_udp, read_gso_max_size, read_mac, read_mtu,
 };
 use crate::tc::maps::{
-    GutConfig, GutStats, TcDebugStats, DEFAULT_INNER_MTU, GUT_FLAG_NEED_L4_CSUM, OUTER_OVERHEAD_IPV4,
-    OUTER_OVERHEAD_IPV6,
+    GutConfig, GutStats, TcDebugStats, DEFAULT_INNER_MTU, GUT_FLAG_NEED_L4_CSUM,
+    OUTER_OVERHEAD_IPV4, OUTER_OVERHEAD_IPV6,
 };
 use crate::Result;
 use std::os::fd::AsRawFd;
@@ -2035,11 +2035,17 @@ impl TcBpfManager {
         let debug = self
             .egress_skel
             .get_map_fd("tc_debug_map")
-            .and_then(|fd| Self::lookup_array_raw(fd.as_raw_fd(), &key, std::mem::size_of::<TcDebugStats>()))
+            .and_then(|fd| {
+                Self::lookup_array_raw(fd.as_raw_fd(), &key, std::mem::size_of::<TcDebugStats>())
+            })
             .map(|bytes| Self::parse_tc_debug_stats(&bytes))
             .unwrap_or_default();
 
-        Ok(TcStats { egress, ingress, debug })
+        Ok(TcStats {
+            egress,
+            ingress,
+            debug,
+        })
     }
 
     #[cfg(all(target_os = "linux", feature = "tc_ebpf"))]

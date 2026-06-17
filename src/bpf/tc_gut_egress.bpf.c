@@ -847,10 +847,6 @@ int gut_egress(struct __sk_buff *skb)
                     __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_after_final_header_byte8_is_06, 1);
                 else
                     __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_after_final_header_byte8_not_06, 1);
-                if (wg_len == 128)
-                    bpf_printk("tc_dbg type4 len128 dyn=%u wg_len=%u code=%u off=%u byte8=0x%x",
-                               cfg->dynamic_peer, wg_len, (__u32)gut_type4_len_byte,
-                               udp_off + sizeof(struct udphdr), (__u32)final_byte8);
             }
         }
     }
@@ -902,9 +898,6 @@ int gut_egress(struct __sk_buff *skb)
                 else
                     __sync_fetch_and_add(&tc_dbg->tc_dbg_type4_after_final_header_byte8_not_06, 1);
             }
-            bpf_printk("tc_emit_dbg2 dyn=%u wg_len=%u off=%u b0=0x%x b8=0x%x b9=0x%x",
-                       cfg->dynamic_peer, wg_len, new_quic_off,
-                       (__u32)emit_b0, (__u32)emit_b8, (__u32)emit_b9);
         }
     }
 #endif

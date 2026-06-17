@@ -790,8 +790,6 @@ static __always_inline int gut_xdp_core(struct xdp_md *ctx, struct gut_config *c
         restored_wg_len = WG_MIN_PACKET + inferred_delta;
         if (restored_wg_len < WG_MIN_PACKET || restored_wg_len > wg_len) return -2;
         if (wg_len - restored_wg_len > 63) return -2;
-        if (wg_len == 142 && restored_wg_len == 128)
-            bpf_printk("xdp_gut_type4_infer len142 restore128");
     }
     else
     {
