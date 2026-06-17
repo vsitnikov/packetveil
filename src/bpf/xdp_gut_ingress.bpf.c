@@ -774,16 +774,24 @@ static __always_inline int gut_xdp_core(struct xdp_md *ctx, struct gut_config *c
             return -1;
         restored_wg_len = 64;
     }
-    else if (wg_type == 4)
-    {
-        __u32 len_code = quic[8];
-        restored_wg_len = WG_MIN_PACKET + (len_code << 4);
-        if (restored_wg_len < WG_MIN_PACKET || restored_wg_len > wg_len)
-            return -2;
-        if (ballast_len > 63)
-            return -2;
-        if (wg_len - restored_wg_len != ballast_len)
-            return -2;
+    else if (wg_type == 4) {
+        /* GUT type4: infer restored WireGuard transport length from wire length.
+         * Do not trust quic[8] / quic[9] on the dynamic-peer reverse path: v12
+         * proved TC can read byte8=0x06 before redirect while the emitted eth0
+         * packet still has random bytes at GUT header positions 8/9.  The wire
+         * payload length is still stable. WireGuard transport-data packets are
+         * aligned as 32 + 16*N; TC adds only ballast after the encrypted WG
+         * packet.  Therefore strip ballast by rounding the post-GUT payload
+         * length down to the nearest WG type4-aligned size.
+         */
+        if (wg_len < WG_MIN_PACKET) return -2;
+        __u32 inferred_delta = wg_len - WG_MIN_PACKET;
+        inferred_delta &= ~0x0FU;
+        restored_wg_len = WG_MIN_PACKET + inferred_delta;
+        if (restored_wg_len < WG_MIN_PACKET || restored_wg_len > wg_len) return -2;
+        if (wg_len - restored_wg_len > 63) return -2;
+        if (wg_len == 142 && restored_wg_len == 128)
+            bpf_printk("xdp_gut_type4_infer len142 restore128");
     }
     else
     {
