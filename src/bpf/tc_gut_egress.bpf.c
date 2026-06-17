@@ -788,10 +788,13 @@ int gut_egress(struct __sk_buff *skb)
 #if defined(GUT_MODE_GUT)
     if (wg_type == 4)
     {
-        __u8 *gut_lenp = (__u8 *)data + udp_off + sizeof(struct udphdr) + 8;
-        if (gut_lenp + 1 > (__u8 *)data_end)
+        __u8 gut_hdr[GUT_HEADER_SIZE];
+        __builtin_memcpy(gut_hdr + 0, &ppn, 4);
+        __builtin_memcpy(gut_hdr + 4, &enc_ports, 4);
+        gut_hdr[8] = gut_type4_len_byte;
+        gut_hdr[9] = (pad_len > 0) ? (0x40 | ((__u8)(pad_len - 1) & 0x3F)) : 0x00;
+        if (bpf_skb_store_bytes(skb, udp_off + sizeof(struct udphdr), gut_hdr, GUT_HEADER_SIZE, 0) < 0)
             return TC_ACT_OK;
-        *gut_lenp = gut_type4_len_byte;
     }
 #endif
 
