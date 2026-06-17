@@ -501,17 +501,8 @@ int gut_egress(struct __sk_buff *skb)
     __u32 room = outer_hdr_len;
 #endif
 
-    #if defined(GUT_MODE_GUT)
-    /* GUT mode constructs the outer IPv4/IPv6+UDP header manually below.
-     * Do not set skb UDP-encap/GSO metadata here: on the dynamic-peer
-     * reverse path that metadata can diverge from the linear bytes
-     * that TC reads back before bpf_redirect().
-     */
-    __u64 adj_flags = 0;
-#else
     __u64 adj_flags = BPF_F_ADJ_ROOM_ENCAP_L4_UDP | BPF_F_ADJ_ROOM_FIXED_GSO;
     adj_flags |= (ipver == 6) ? BPF_F_ADJ_ROOM_ENCAP_L3_IPV6 : BPF_F_ADJ_ROOM_ENCAP_L3_IPV4;
-#endif
     if (bpf_skb_adjust_room(skb, room, BPF_ADJ_ROOM_MAC, adj_flags) < 0)
         return TC_ACT_OK;
 
